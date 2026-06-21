@@ -21,13 +21,13 @@ import org.apache.logging.log4j.Logger;
 public class BuildingGadgets {
     public static final String MODID = "buildinggadgets";
     public static final String MODNAME = "Building Gadgets";
-    public static final String VERSION = "@VERSION@";
-    public static final String UPDATE_JSON = "@UPDATE@";
+    public static final String VERSION = Tags.VERSION;
+    public static final String UPDATE_JSON = Tags.UPDATE_JSON;
     public static final String DEPENDENCIES = "required-after:forge@[14.23.3.2694,)";
 
     public static final CreativeTabs BUILDING_CREATIVE_TAB = new CreativeTabs(new TextComponentTranslation("buildingGadgets").getUnformattedComponentText()) {
         @Override
-        public ItemStack getTabIconItem() {
+        public ItemStack createIcon() {
             ItemStack stack = new ItemStack(ModItems.gadgetBuilding);
             stack.setTagCompound(new NBTTagCompound());
             stack.getTagCompound().setByte("creative", (byte) 0); 

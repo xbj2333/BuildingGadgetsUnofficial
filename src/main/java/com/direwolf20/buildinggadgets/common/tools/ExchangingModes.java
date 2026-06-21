@@ -109,11 +109,11 @@ public enum ExchangingModes {
             // Only replace construction block with same block state
             if (tile instanceof ConstructionBlockTileEntity && ((ConstructionBlockTileEntity) tile).getBlockState() == state)
                 return false;
-            else if (tile != null) // Otherwise if the block has a tile entity, ignore it
+            else if (tile != null && !MiningLevelRestrictions.isAdditionsAddedBlock(worldBlockState)) // Otherwise if the block has a tile entity, ignore it
                 return false;
 
             // Bedrock, End Portal Frame, etc.
-            if (worldBlockState.getBlockHardness(world, pos) < 0)
+            if (worldBlockState.getBlockHardness(world, pos) == -1.0F)
                 return false;
 
             // Don't replace liquids

@@ -8,6 +8,7 @@ import com.direwolf20.buildinggadgets.common.blocks.ConstructionBlockTileEntity;
 import com.direwolf20.buildinggadgets.common.blocks.EffectBlock;
 import com.direwolf20.buildinggadgets.common.config.SyncedConfig;
 import com.direwolf20.buildinggadgets.common.entities.BlockBuildEntity;
+import com.direwolf20.buildinggadgets.common.integration.mods.StageRestrictions;
 import com.direwolf20.buildinggadgets.common.items.ITemplate;
 import com.direwolf20.buildinggadgets.common.items.ModItems;
 import com.direwolf20.buildinggadgets.common.network.PacketBlockMap;
@@ -230,6 +231,7 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
     @Override
     public void addInformation(ItemStack stack, @Nullable World world, List<String> list, ITooltipFlag b) {
         super.addInformation(stack, world, list, b);
+        MiningLevelRestrictions.addTooltip(list, stack, true);
         list.add(TextFormatting.AQUA + I18n.format("tooltip.gadget.mode") + ": " + getToolMode(stack));
         addInformationRayTraceFluid(list, stack);
         addEnergyInformation(list, stack);
@@ -258,6 +260,10 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
                     //player.sendStatusMessage(new TextComponentString(TextFormatting.AQUA + new TextComponentTranslation("message.gadget.areareset").getUnformattedComponentText()), true);
                     return new ActionResult<ItemStack>(EnumActionResult.SUCCESS, stack);
                 }
+                if (!StageRestrictions.canUseBlock(player, world, pos, true))
+                    return new ActionResult<ItemStack>(EnumActionResult.FAIL, stack);
+                if (!MiningLevelRestrictions.canBreak(stack, player, world, pos, StageRestrictions.getRestrictedState(world, pos), true))
+                    return new ActionResult<ItemStack>(EnumActionResult.FAIL, stack);
                 if (player.isSneaking()) {
                     if (getStartPos(stack) != null)
                         copyBlocks(stack, player, world, getStartPos(stack), pos);
@@ -400,7 +406,7 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
                 for (int z = iStartZ; z <= iEndZ; z++) {
                     BlockPos tempPos = new BlockPos(x, y, z);
                     IBlockState tempState = world.getBlockState(tempPos);
-                    if (!(tempState.getBlock() instanceof EffectBlock) && tempState != Blocks.AIR.getDefaultState() && (world.getTileEntity(tempPos) == null || world.getTileEntity(tempPos) instanceof ConstructionBlockTileEntity) && !tempState.getMaterial().isLiquid() && !SyncedConfig.blockBlacklist.contains(tempState.getBlock())) {
+                    if (!(tempState.getBlock() instanceof EffectBlock) && tempState != Blocks.AIR.getDefaultState() && isCopyableTileEntityBlock(world, tempPos, tempState) && !tempState.getMaterial().isLiquid() && !SyncedConfig.blockBlacklist.contains(tempState.getBlock())) {
                         TileEntity te = world.getTileEntity(tempPos);
                         IBlockState assignState = InventoryManipulation.getSpecificStates(tempState, world, player, tempPos, stack);
                         IBlockState actualState = assignState.getActualState(world, tempPos);
@@ -408,6 +414,12 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
                             actualState = ((ConstructionBlockTileEntity) te).getActualBlockState();
                         }
                         if (actualState != null) {
+                            if (!StageRestrictions.canUseBlock(player, world, tempPos, actualState, true)) {
+                                return false;
+                            }
+                            if (!MiningLevelRestrictions.canBreak(stack, player, world, tempPos, actualState, true)) {
+                                return false;
+                            }
                             UniqueItem uniqueItem = BlockMapIntState.blockStateToUniqueItem(actualState, player, tempPos);
                             if (uniqueItem.item != Items.AIR) {
                                 posIntArrayList.add(GadgetUtils.relPosToInt(start, tempPos));
@@ -436,7 +448,7 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
                                 itemCountMap.add(uniqueItem, neededItems);
                             }
                         }
-                    } else if ((world.getTileEntity(tempPos) != null) && !(world.getTileEntity(tempPos) instanceof ConstructionBlockTileEntity)) {
+                    } else if ((world.getTileEntity(tempPos) != null) && !(world.getTileEntity(tempPos) instanceof ConstructionBlockTileEntity) && !MiningLevelRestrictions.isAdditionsAddedBlock(tempState)) {
                         foundTE++;
                     }
                 }
@@ -470,6 +482,11 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
         return true;
     }
 
+    private static boolean isCopyableTileEntityBlock(World world, BlockPos pos, IBlockState state) {
+        TileEntity te = world.getTileEntity(pos);
+        return te == null || te instanceof ConstructionBlockTileEntity || MiningLevelRestrictions.isAdditionsAddedBlock(state);
+    }
+
     private void buildBlockMap(World world, BlockPos startPos, ItemStack stack, EntityPlayer player) {
 //        long time = System.nanoTime();
 
@@ -482,10 +499,20 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
         pos = pos.south(GadgetCopyPaste.getZ(stack));
 
         List<BlockMap> blockMapList = getBlockMapList(tagCompound, pos);
+        Map<IBlockState, UniqueItem> intStackMap = getBlockMapIntState(tagCompound).getIntStackMap();
+
+        for (BlockMap blockMap : blockMapList)
+            if (!StageRestrictions.canUseBlock(player, world, blockMap.pos, blockMap.state, true))
+                return;
+
+        for (BlockMap blockMap : blockMapList)
+            if (!MiningLevelRestrictions.canPlace(stack, player, world, blockMap.pos, blockMap.state, true))
+                return;
+
         setLastBuild(stack, pos, player.dimension);
 
         for (BlockMap blockMap : blockMapList)
-            placeBlock(world, blockMap.pos, player, blockMap.state, getBlockMapIntState(tagCompound).getIntStackMap());
+            placeBlock(world, blockMap.pos, player, blockMap.state, intStackMap);
 
         GadgetUtils.clearCachedRemoteInventory();
         setAnchor(stack, null);
@@ -504,8 +531,14 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
         if (pos.getY() < 0 || state.equals(Blocks.AIR.getDefaultState()) || !player.isAllowEdit())
             return;
 
+        if (!StageRestrictions.canUseBlock(player, world, pos, state, true))
+            return;
+
         ItemStack heldItem = getGadget(player);
         if (heldItem.isEmpty())
+            return;
+
+        if (!MiningLevelRestrictions.canPlace(heldItem, player, world, pos, state, true))
             return;
 
         if (ModItems.gadgetCopyPaste.getStartPos(heldItem) == null || ModItems.gadgetCopyPaste.getEndPos(heldItem) == null)
@@ -567,6 +600,12 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
                 return;
             }
             currentAnchor = lookingAt.getBlockPos();
+            if (!StageRestrictions.canUseBlock(player, player.world, currentAnchor, true)) {
+                return;
+            }
+            if (!MiningLevelRestrictions.canPlace(stack, player, player.world, currentAnchor, player.world.getBlockState(currentAnchor), true)) {
+                return;
+            }
             setAnchor(stack, currentAnchor);
             player.sendStatusMessage(new TextComponentString(TextFormatting.AQUA + new TextComponentTranslation("message.gadget.anchorrender").getUnformattedComponentText()), true);
         } else {
@@ -596,10 +635,11 @@ public class GadgetCopyPaste extends GadgetGeneric implements ITemplate {
             boolean sameDim = (player.dimension == dimension);
             IBlockState currentBlock = world.getBlockState(blockMap.pos);
 
-            boolean cancelled = !GadgetGeneric.EmitEvent.breakBlock(world, blockMap.pos, currentBlock, player);
-            if (distance < 256 && !cancelled && sameDim) { //Don't allow us to undo a block while its still being placed or too far away
+            boolean allowedMiningLevel = MiningLevelRestrictions.canBreak(heldItem, player, world, blockMap.pos, currentBlock, true);
+            boolean cancelled = allowedMiningLevel && !GadgetGeneric.EmitEvent.breakBlock(world, blockMap.pos, currentBlock, player);
+            if (distance < 256 && !cancelled && sameDim && allowedMiningLevel) { //Don't allow us to undo a block while its still being placed or too far away
                 if (currentBlock.getBlock() == blockMap.state.getBlock() || currentBlock.getBlock() instanceof ConstructionBlock) {
-                    if (currentBlock.getBlockHardness(world, blockMap.pos) >= 0) {
+                    if (currentBlock.getBlockHardness(world, blockMap.pos) != -1.0F) {
                         if( !player.capabilities.isCreativeMode )
                             currentBlock.getBlock().harvestBlock(world, player, blockMap.pos, currentBlock, world.getTileEntity(blockMap.pos), silkTool);
                         world.spawnEntity(new BlockBuildEntity(world, blockMap.pos, player, currentBlock, 2, currentBlock, false));

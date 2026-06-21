@@ -2,6 +2,7 @@ package com.direwolf20.buildinggadgets.common.items.gadgets;
 
 import com.direwolf20.buildinggadgets.common.config.SyncedConfig;
 import com.direwolf20.buildinggadgets.common.entities.BlockBuildEntity;
+import com.direwolf20.buildinggadgets.common.integration.mods.StageRestrictions;
 import com.direwolf20.buildinggadgets.common.items.FakeBuilderWorld;
 import com.direwolf20.buildinggadgets.common.items.ModItems;
 import com.direwolf20.buildinggadgets.common.tools.*;
@@ -99,6 +100,7 @@ public class GadgetExchanger extends GadgetGeneric {
     @Override
     public void addInformation(ItemStack stack, @Nullable World world, List<String> list, ITooltipFlag b) {
         super.addInformation(stack, world, list, b);
+        MiningLevelRestrictions.addTooltip(list, stack, true);
         list.add(TextFormatting.DARK_GREEN + I18n.format("tooltip.gadget.block") + ": " + getToolBlock(stack).getBlock().getLocalizedName());
         ExchangingModes mode = getToolMode(stack);
         list.add(TextFormatting.AQUA + I18n.format("tooltip.gadget.mode") + ": " + (mode == ExchangingModes.Surface && getConnectedArea(stack) ? I18n.format("tooltip.gadget.connected") + " " : "") + mode);
@@ -167,9 +169,10 @@ public class GadgetExchanger extends GadgetGeneric {
         IBlockState blockState = getToolBlock(heldItem);
 
         if (blockState != Blocks.AIR.getDefaultState()) {  //Don't attempt a build if a block is not chosen -- Typically only happens on a new tool.
-            IBlockState state = Blocks.AIR.getDefaultState(); //Initialize a new State Variable for use in the fake world
             fakeWorld.setWorldAndState(player.world, blockState, coordinates); // Initialize the fake world's blocks
+            List<IBlockState> states = new ArrayList<IBlockState>();
             for (BlockPos coordinate : coords) {
+                IBlockState state = blockState;
                 if (fakeWorld.getWorldType() != WorldType.DEBUG_ALL_BLOCK_STATES) {
                     try {
                         state = blockState.getActualState(fakeWorld, coordinate);  //Get the state of the block in the fake world (This lets fences be connected, etc)
@@ -179,7 +182,19 @@ public class GadgetExchanger extends GadgetGeneric {
                 //Get the extended block state in the fake world
                 //Disabled to fix Chisel
                 //state = state.getBlock().getExtendedState(state, fakeWorld, coordinate);
-                exchangeBlock(world, player, coordinate, state);
+                if (!StageRestrictions.canUseBlock(player, world, coordinate, state, true))
+                    return false;
+                if (!StageRestrictions.canUseBlock(player, world, coordinate, true))
+                    return false;
+                if (!MiningLevelRestrictions.canPlace(heldItem, player, world, coordinate, state, true))
+                    return false;
+                if (!MiningLevelRestrictions.canBreak(heldItem, player, world, coordinate, StageRestrictions.getRestrictedState(world, coordinate), true))
+                    return false;
+                states.add(state);
+            }
+
+            for (int i = 0; i < coords.size(); i++) {
+                exchangeBlock(world, player, coords.get(i), states.get(i));
             }
             GadgetUtils.clearCachedRemoteInventory();
         }
@@ -192,6 +207,20 @@ public class GadgetExchanger extends GadgetGeneric {
             return false;
 
         IBlockState currentBlock = world.getBlockState(pos);
+        if (!StageRestrictions.canUseBlock(player, world, pos, setBlock, true))
+            return false;
+        if (!StageRestrictions.canUseBlock(player, world, pos, true))
+            return false;
+
+        ItemStack tool = getGadget(player);
+        if (tool.isEmpty())
+            return false;
+
+        if (!MiningLevelRestrictions.canPlace(tool, player, world, pos, setBlock, true))
+            return false;
+        if (!MiningLevelRestrictions.canBreak(tool, player, world, pos, StageRestrictions.getRestrictedState(world, pos), true))
+            return false;
+
         ItemStack itemStack;
         boolean useConstructionPaste = false;
         //ItemStack itemStack = setBlock.getBlock().getPickBlock(setBlock, null, world, pos, player);
@@ -203,10 +232,6 @@ public class GadgetExchanger extends GadgetGeneric {
         if (itemStack.getItem().equals(Items.AIR)) {
             itemStack = setBlock.getBlock().getPickBlock(setBlock, null, world, pos, player);
         }
-
-        ItemStack tool = getGadget(player);
-        if (tool.isEmpty())
-            return false;
 
         NonNullList<ItemStack> drops = NonNullList.create();
         setBlock.getBlock().getDrops(drops, world, pos, setBlock, 0);
@@ -269,7 +294,6 @@ public class GadgetExchanger extends GadgetGeneric {
 
         return false;
     }
-
     /**
      * This may seem a bit strange at a glance. Basically when checking if a block can be placed
      * the game checks it against the current block. As the exchanger will not remove that

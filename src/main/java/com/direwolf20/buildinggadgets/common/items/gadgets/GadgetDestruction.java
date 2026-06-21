@@ -8,8 +8,10 @@ import com.direwolf20.buildinggadgets.common.building.Region;
 import com.direwolf20.buildinggadgets.common.building.placement.ConnectedSurface;
 import com.direwolf20.buildinggadgets.common.config.SyncedConfig;
 import com.direwolf20.buildinggadgets.common.entities.BlockBuildEntity;
+import com.direwolf20.buildinggadgets.common.integration.mods.StageRestrictions;
 import com.direwolf20.buildinggadgets.common.tools.BlockPosState;
 import com.direwolf20.buildinggadgets.common.tools.GadgetUtils;
+import com.direwolf20.buildinggadgets.common.tools.MiningLevelRestrictions;
 import com.direwolf20.buildinggadgets.common.tools.VectorTools;
 import com.direwolf20.buildinggadgets.common.tools.WorldSave;
 import net.minecraft.block.state.IBlockState;
@@ -73,6 +75,7 @@ public class GadgetDestruction extends GadgetGeneric {
     @Override
     public void addInformation(ItemStack stack, @Nullable World world, List<String> list, ITooltipFlag b) {
         super.addInformation(stack, world, list, b);
+        MiningLevelRestrictions.addTooltip(list, stack, true);
         list.add(TextFormatting.RED + I18n.format("tooltip.gadget.destroywarning"));
         list.add(TextFormatting.AQUA + I18n.format("tooltip.gadget.destroyshowoverlay") + ": " + getOverlay(stack));
         list.add(TextFormatting.YELLOW + I18n.format("tooltip.gadget.connected_area") + ": " + getConnectedArea(stack));
@@ -215,6 +218,10 @@ public class GadgetDestruction extends GadgetGeneric {
                 }
                 BlockPos startBlock = (getAnchor(stack) == null) ? lookingAt.getBlockPos() : getAnchor(stack);
                 EnumFacing sideHit = (getAnchorSide(stack) == null) ? lookingAt.sideHit : getAnchorSide(stack);
+                if (!StageRestrictions.canUseBlock(player, world, startBlock, true))
+                    return new ActionResult<>(EnumActionResult.FAIL, stack);
+                if (!MiningLevelRestrictions.canBreak(stack, player, world, startBlock, StageRestrictions.getRestrictedState(world, startBlock), true))
+                    return new ActionResult<>(EnumActionResult.FAIL, stack);
                 clearArea(world, startBlock, sideHit, player, stack);
                 if (getAnchor(stack) != null) {
                     setAnchor(stack, null);
@@ -239,6 +246,12 @@ public class GadgetDestruction extends GadgetGeneric {
                 return;
             }
             currentAnchor = lookingAt.getBlockPos();
+            if (!StageRestrictions.canUseBlock(player, player.world, currentAnchor, true)) {
+                return;
+            }
+            if (!MiningLevelRestrictions.canBreak(stack, player, player.world, currentAnchor, StageRestrictions.getRestrictedState(player.world, currentAnchor), true)) {
+                return;
+            }
             setAnchor(stack, currentAnchor);
             setAnchorSide(stack, lookingAt.sideHit);
             player.sendStatusMessage(new TextComponentString(TextFormatting.AQUA + new TextComponentTranslation("message.gadget.anchorrender").getUnformattedComponentText()), true);
@@ -290,8 +303,8 @@ public class GadgetDestruction extends GadgetGeneric {
         if (currentBlock.getBlock().isAir(currentBlock, world, voidPos)) return false;
         //if (currentBlock.getBlock().getMaterial(currentBlock).isLiquid()) return false;
         if (currentBlock.equals(ModBlocks.effectBlock.getDefaultState())) return false;
-        if ((te != null) && !(te instanceof ConstructionBlockTileEntity)) return false;
-        if (currentBlock.getBlockHardness(world, voidPos) < 0) return false;
+        if ((te != null) && !(te instanceof ConstructionBlockTileEntity) && !MiningLevelRestrictions.isAdditionsAddedBlock(currentBlock)) return false;
+        if (currentBlock.getBlockHardness(world, voidPos) == -1.0F) return false;
 
         ItemStack tool = getGadget(player);
         if (tool.isEmpty()) return false;
@@ -306,6 +319,8 @@ public class GadgetDestruction extends GadgetGeneric {
     private void clearArea(World world, BlockPos pos, EnumFacing side, EntityPlayer player, ItemStack stack) {
         Set<BlockPos> voidPosArray = getArea(world, pos, side, player, stack);
         List<BlockPosState> blockList = new ArrayList<>();
+        boolean notifiedMissingStage = false;
+        boolean notifiedMiningLevel = false;
 
         for (BlockPos voidPos : voidPosArray) {
             boolean isPaste;
@@ -322,6 +337,14 @@ public class GadgetDestruction extends GadgetGeneric {
             }
 
             isPaste = pasteState != Blocks.AIR.getDefaultState() && pasteState != null;
+            if (!StageRestrictions.canUseBlock(player, world, voidPos, isPaste ? pasteState : blockState, !notifiedMissingStage)) {
+                notifiedMissingStage = true;
+                continue;
+            }
+            if (!MiningLevelRestrictions.canBreak(stack, player, world, voidPos, isPaste ? pasteState : blockState, !notifiedMiningLevel)) {
+                notifiedMiningLevel = true;
+                continue;
+            }
             if (!destroyBlock(world, voidPos, player))
                 continue;
 
@@ -375,6 +398,8 @@ public class GadgetDestruction extends GadgetGeneric {
             IBlockState state = world.getBlockState(posState.getPos());
             if (!state.getBlock().isAir(state, world, posState.getPos()) && !state.getMaterial().isLiquid())
                 return;
+            if (!MiningLevelRestrictions.canBreak(stack, player, world, posState.getPos(), posState.getState(), true))
+                return;
 
             // Per block place event to let mods override specific parts of the undo.
             BlockSnapshot blockSnapshot = BlockSnapshot.getBlockSnapshot(world, posState.getPos());
@@ -400,12 +425,16 @@ public class GadgetDestruction extends GadgetGeneric {
         if( !this.canUse(tool, player) )
             return false;
 
-        if( !GadgetGeneric.EmitEvent.breakBlock(world, voidPos, world.getBlockState(voidPos), player) )
+        IBlockState currentBlock = world.getBlockState(voidPos);
+        if (!MiningLevelRestrictions.canBreak(tool, player, world, voidPos, StageRestrictions.getRestrictedState(world, voidPos), true))
+            return false;
+
+        if( !GadgetGeneric.EmitEvent.breakBlock(world, voidPos, currentBlock, player) )
             return false;
 
         this.applyDamage(tool, player);
 
-        world.spawnEntity(new BlockBuildEntity(world, voidPos, player, world.getBlockState(voidPos), 2, Blocks.AIR.getDefaultState(), false));
+        world.spawnEntity(new BlockBuildEntity(world, voidPos, player, currentBlock, 2, Blocks.AIR.getDefaultState(), false));
         return true;
     }
 

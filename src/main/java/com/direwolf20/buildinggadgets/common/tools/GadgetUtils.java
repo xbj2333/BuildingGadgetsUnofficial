@@ -4,6 +4,7 @@ import com.direwolf20.buildinggadgets.common.blocks.ConstructionBlockTileEntity;
 import com.direwolf20.buildinggadgets.common.blocks.EffectBlock;
 import com.direwolf20.buildinggadgets.common.config.SyncedConfig;
 import com.direwolf20.buildinggadgets.common.integration.NetworkProvider;
+import com.direwolf20.buildinggadgets.common.integration.mods.StageRestrictions;
 import com.direwolf20.buildinggadgets.common.items.gadgets.GadgetBuilding;
 import com.direwolf20.buildinggadgets.common.items.gadgets.GadgetExchanger;
 import com.direwolf20.buildinggadgets.common.network.PacketRotateMirror;
@@ -282,14 +283,22 @@ public class GadgetUtils {
         EnumActionResult result = setRemoteInventory(stack, player, world, pos, true);
         if (result == EnumActionResult.SUCCESS)
             return;
+        if (result == EnumActionResult.FAIL)
+            return;
 
         IBlockState state = world.getBlockState(pos);
-        if (result == EnumActionResult.FAIL || SyncedConfig.blockBlacklist.contains(state.getBlock()) || state.getBlock() instanceof EffectBlock ) {
+        if (SyncedConfig.blockBlacklist.contains(state.getBlock()) || state.getBlock() instanceof EffectBlock ) {
             player.sendStatusMessage(new TextComponentString(TextFormatting.RED + new TextComponentTranslation("message.gadget.invalidblock").getUnformattedComponentText()), true);
             return;
         }
         IBlockState placeState = InventoryManipulation.getSpecificStates(state, world, player, pos, stack);
         IBlockState actualState = placeState.getActualState(world, pos);
+        if (!StageRestrictions.canUseBlock(player, world, pos, actualState, true)) {
+            return;
+        }
+        if (!MiningLevelRestrictions.canPlace(stack, player, world, pos, actualState, true)) {
+            return;
+        }
         setToolBlock(stack, placeState);
         setToolActualBlock(stack, actualState);
     }
@@ -300,14 +309,26 @@ public class GadgetUtils {
             return EnumActionResult.PASS;
 
         if (setTool && te instanceof ConstructionBlockTileEntity && ((ConstructionBlockTileEntity) te).getBlockState() != null) {
-            setToolBlock(stack, ((ConstructionBlockTileEntity) te).getActualBlockState());
-            setToolActualBlock(stack, ((ConstructionBlockTileEntity) te).getActualBlockState());
+            IBlockState state = ((ConstructionBlockTileEntity) te).getActualBlockState();
+            if (!StageRestrictions.canUseBlock(player, world, pos, state, true)) {
+                return EnumActionResult.FAIL;
+            }
+            if (!MiningLevelRestrictions.canPlace(stack, player, world, pos, state, true)) {
+                return EnumActionResult.FAIL;
+            }
+            setToolBlock(stack, state);
+            setToolActualBlock(stack, state);
             return EnumActionResult.SUCCESS;
         }
         if (setRemoteInventory(player, stack, pos, world.provider.getDimension(), world))
             return EnumActionResult.SUCCESS;
 
-        return EnumActionResult.FAIL;
+        if (MiningLevelRestrictions.isAdditionsAddedBlock(world.getBlockState(pos))) {
+            return EnumActionResult.PASS;
+        } else {
+            player.sendStatusMessage(new TextComponentString(TextFormatting.RED + new TextComponentTranslation("message.gadget.invalidblock").getUnformattedComponentText()), true);
+            return EnumActionResult.FAIL;
+        }
     }
 
     public static boolean anchorBlocks(EntityPlayer player, ItemStack stack) {

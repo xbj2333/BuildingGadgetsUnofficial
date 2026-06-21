@@ -3,6 +3,7 @@ package com.direwolf20.buildinggadgets.common.items.gadgets;
 import com.direwolf20.buildinggadgets.common.blocks.ModBlocks;
 import com.direwolf20.buildinggadgets.common.config.SyncedConfig;
 import com.direwolf20.buildinggadgets.common.entities.BlockBuildEntity;
+import com.direwolf20.buildinggadgets.common.integration.mods.StageRestrictions;
 import com.direwolf20.buildinggadgets.common.items.FakeBuilderWorld;
 import com.direwolf20.buildinggadgets.common.items.ModItems;
 import com.direwolf20.buildinggadgets.common.tools.*;
@@ -83,6 +84,7 @@ public class GadgetBuilding extends GadgetGeneric {
     public void addInformation(ItemStack stack, @Nullable World world, List<String> list, ITooltipFlag b) {
         //Add tool information to the tooltip
         super.addInformation(stack, world, list, b);
+        MiningLevelRestrictions.addTooltip(list, stack, false);
         list.add(TextFormatting.DARK_GREEN + I18n.format("tooltip.gadget.block") + ": " + getToolBlock(stack).getBlock().getLocalizedName());
         BuildingModes mode = getToolMode(stack);
         list.add(TextFormatting.AQUA + I18n.format("tooltip.gadget.mode") + ": " + (mode == BuildingModes.Surface && getConnectedArea(stack) ? I18n.format("tooltip.gadget.connected") + " " : "") + mode);
@@ -163,6 +165,9 @@ public class GadgetBuilding extends GadgetGeneric {
         IBlockState blockState = getToolBlock(heldItem);
 
         if (blockState != Blocks.AIR.getDefaultState()) { //Don't attempt a build if a block is not chosen -- Typically only happens on a new tool.
+            if (!StageRestrictions.canUseBlock(player, world, player.getPosition(), blockState, true)) {
+                return false;
+            }
             IBlockState state = Blocks.AIR.getDefaultState(); //Initialize a new State Variable for use in the fake world
             fakeWorld.setWorldAndState(player.world, blockState, coordinates); // Initialize the fake world's blocks
             for (BlockPos coordinate : coords) {
@@ -214,9 +219,10 @@ public class GadgetBuilding extends GadgetGeneric {
                 double distance = coord.getDistance(player.getPosition().getX(), player.getPosition().getY(), player.getPosition().getZ());
                 boolean sameDim = (player.dimension == dimension);
 
-                boolean cancelled = !GadgetGeneric.EmitEvent.breakBlock(world, coord, currentBlock, player);
+                boolean allowedMiningLevel = MiningLevelRestrictions.canPlace(heldItem, player, world, coord, currentBlock, true);
+                boolean cancelled = allowedMiningLevel && !GadgetGeneric.EmitEvent.breakBlock(world, coord, currentBlock, player);
 
-                if (distance < 64 && sameDim && currentBlock != ModBlocks.effectBlock.getDefaultState() && !cancelled) { //Don't allow us to undo a block while its still being placed or too far away
+                if (distance < 64 && sameDim && currentBlock != ModBlocks.effectBlock.getDefaultState() && allowedMiningLevel && !cancelled) { //Don't allow us to undo a block while its still being placed or too far away
                     if (currentBlock != Blocks.AIR.getDefaultState()) {
                         if( !player.capabilities.isCreativeMode )
                             currentBlock.getBlock().harvestBlock(world, player, coord, currentBlock, world.getTileEntity(coord), silkTool);
@@ -245,6 +251,13 @@ public class GadgetBuilding extends GadgetGeneric {
 
         ItemStack heldItem = getGadget(player);
         if (heldItem.isEmpty())
+            return false;
+
+        if (!StageRestrictions.canUseBlock(player, world, pos, setBlock, true)) {
+            return false;
+        }
+
+        if (!MiningLevelRestrictions.canPlace(heldItem, player, world, pos, setBlock, true))
             return false;
 
         boolean useConstructionPaste = false;
